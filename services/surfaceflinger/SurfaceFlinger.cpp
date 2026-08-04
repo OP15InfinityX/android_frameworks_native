@@ -254,10 +254,6 @@ enum class OplusDisplayModeType : int32_t {
     OA = 2,
 };
 
-bool shouldUseOplusMinFpsOverlay() {
-    return base::GetIntProperty(kOplusRefreshRateProperty, 0) > 0;
-}
-
 std::shared_ptr<IDisplayPanelFeature> getOplusDisplayPanelFeature() {
     static std::shared_ptr<IDisplayPanelFeature> panelFeature;
     static bool loggedUnavailable = false;
@@ -1174,26 +1170,6 @@ void SurfaceFlinger::init() FTL_FAKE_GUARD(kMainThreadContext) {
                                 display->updateRefreshRateOverlayRate(vsyncRate, renderRate);
                             }
                         }));
-                        if (shouldUseOplusMinFpsOverlay()) {
-                            for (const nsecs_t delay : {ms2ns(250), ms2ns(750), ms2ns(1500)}) {
-                                static_cast<void>(mScheduler->scheduleDelayed(
-                                        [=, this]() FTL_FAKE_GUARD(kMainThreadContext) {
-                                            const auto display = FTL_FAKE_GUARD(
-                                                    mStateLock, getDisplayDeviceLocked(displayId));
-                                            if (!display || !display->isRefreshRateOverlayEnabled()) {
-                                                return;
-                                            }
-
-                                            const auto activeMode =
-                                                    mDisplayModeController.getActiveMode(displayId);
-                                            display->updateRefreshRateOverlayRate(
-                                                    activeMode.modePtr->getVsyncRate(),
-                                                    activeMode.fps);
-                                            mScheduler->scheduleFrame();
-                                        },
-                                        delay));
-                            }
-                        }
                     }));
 
     mLayerTracing.setTakeLayersSnapshotProtoFunction(
@@ -2700,29 +2676,9 @@ void SurfaceFlinger::onComposerHalRefresh(hal::HWDisplayId) {
     scheduleComposite(FrameHint::kNone);
 }
 
-void SurfaceFlinger::onComposerHalVsyncIdle(hal::HWDisplayId hwcDisplayId) {
+void SurfaceFlinger::onComposerHalVsyncIdle(hal::HWDisplayId) {
     SFTRACE_CALL();
     mScheduler->forceNextResync();
-
-    if (!shouldUseOplusMinFpsOverlay()) {
-        return;
-    }
-
-    static_cast<void>(mScheduler->schedule([=, this]() FTL_FAKE_GUARD(mStateLock) FTL_FAKE_GUARD(
-                                                   kMainThreadContext) {
-        if (const auto displayIdOpt = getHwComposer().toPhysicalDisplayId(hwcDisplayId)) {
-            if (const auto display = getDisplayDeviceLocked(*displayIdOpt)) {
-                if (!display->isRefreshRateOverlayEnabled()) {
-                    return;
-                }
-
-                const auto activeMode = mDisplayModeController.getActiveMode(*displayIdOpt);
-                constexpr bool kSetByHwc = false;
-                display->updateRefreshRateOverlayRate(activeMode.modePtr->getVsyncRate(),
-                                                      activeMode.fps, kSetByHwc);
-            }
-        }
-    }));
 }
 
 void SurfaceFlinger::onRefreshRateChangedDebug(const RefreshRateChangedDebugData& data) {
@@ -7930,17 +7886,6 @@ void SurfaceFlinger::kernelTimerChanged(PhysicalDisplayId displayId, bool expire
         }
     }));
 
-    if (expired && shouldUseOplusMinFpsOverlay()) {
-        static_cast<void>(mScheduler->scheduleDelayed([=, this]() FTL_FAKE_GUARD(kMainThreadContext) {
-            const auto display = FTL_FAKE_GUARD(mStateLock, getDisplayDeviceLocked(displayId));
-            if (!display || !display->isRefreshRateOverlayEnabled()) return;
-
-            const auto activeMode = mDisplayModeController.getActiveMode(displayId);
-            display->updateRefreshRateOverlayRate(activeMode.modePtr->getVsyncRate(),
-                                                  activeMode.fps);
-            mScheduler->scheduleFrame();
-        }, ms2ns(150)));
-    }
 }
 
 void SurfaceFlinger::vrrDisplayIdle(PhysicalDisplayId displayId, bool idle) {
@@ -7955,18 +7900,6 @@ void SurfaceFlinger::vrrDisplayIdle(PhysicalDisplayId displayId, bool idle) {
         }
     }));
 
-    if (idle && shouldUseOplusMinFpsOverlay()) {
-        static_cast<void>(mScheduler->scheduleDelayed([=, this] {
-            if (const auto display = FTL_FAKE_GUARD(mStateLock, getDisplayDeviceLocked(displayId))) {
-                if (!display->isRefreshRateOverlayEnabled()) return;
-
-                const auto activeMode = mDisplayModeController.getActiveMode(displayId);
-                display->updateRefreshRateOverlayRate(activeMode.modePtr->getVsyncRate(),
-                                                      activeMode.fps);
-                mScheduler->scheduleFrame();
-            }
-        }, ms2ns(150)));
-    }
 }
 
 void SurfaceFlinger::enableLayerCachingTexturePool(PhysicalDisplayId displayId, bool enable) {
@@ -9173,11 +9106,6 @@ status_t SurfaceFlinger::setSmallAreaDetectionThreshold(int32_t appId, float thr
 
 void SurfaceFlinger::enableRefreshRateOverlay(bool enable) {
     bool setByHwc = getHwComposer().hasCapability(Capability::REFRESH_RATE_CHANGED_CALLBACK_DEBUG);
-    const bool showOplusMinFps =
-            shouldUseOplusMinFpsOverlay();
-    if (showOplusMinFps) {
-        setByHwc = false;
-    }
     for (const auto& [displayId, physical] : mPhysicalDisplays) {
         if (physical.snapshot().connectionType() == ui::DisplayConnectionType::Internal ||
             FlagManager::getInstance().refresh_rate_overlay_on_external_display()) {
@@ -9194,24 +9122,6 @@ void SurfaceFlinger::enableRefreshRateOverlay(bool enable) {
                 };
 
                 enableOverlay(setByHwc);
-                if (enable && showOplusMinFps) {
-                    for (const nsecs_t delay : {ms2ns(250), ms2ns(750), ms2ns(1500), ms2ns(3000)}) {
-                        static_cast<void>(mScheduler->scheduleDelayed(
-                                [=, this]() FTL_FAKE_GUARD(kMainThreadContext) {
-                                    const auto display = FTL_FAKE_GUARD(mStateLock,
-                                                                        getDisplayDeviceLocked(
-                                                                                displayId));
-                                    if (!display || !display->isRefreshRateOverlayEnabled()) return;
-
-                                    const auto activeMode =
-                                            mDisplayModeController.getActiveMode(displayId);
-                                    display->updateRefreshRateOverlayRate(
-                                            activeMode.modePtr->getVsyncRate(), activeMode.fps);
-                                    mScheduler->scheduleFrame();
-                                },
-                                delay));
-                    }
-                }
                 if (setByHwc) {
                     const auto status =
                             getHwComposer().setRefreshRateChangedCallbackDebugEnabled(displayId,
