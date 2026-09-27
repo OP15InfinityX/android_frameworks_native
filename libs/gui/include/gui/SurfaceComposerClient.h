@@ -432,6 +432,10 @@ public:
     sp<SurfaceControl> mirrorDisplay(DisplayId displayId);
 
     static const std::string kEmpty;
+    // ABI compatibility for Android 16 WFD blobs, which predate ownerUid.
+    static sp<IBinder> createVirtualDisplay(const std::string& displayName, bool isSecure,
+                                            bool optimizeForPower, const std::string& uniqueId,
+                                            float requestedRefreshRate);
     static sp<IBinder> createVirtualDisplay(const std::string& displayName, bool isSecure,
                                             bool optimizeForPower = true,
                                             const std::string& uniqueId = kEmpty,

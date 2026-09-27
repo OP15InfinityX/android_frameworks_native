@@ -1259,6 +1259,14 @@ void SurfaceComposerClient::Transaction::enableDebugLogCallPoints() {
 
 sp<IBinder> SurfaceComposerClient::createVirtualDisplay(const std::string& displayName,
                                                         bool isSecure, bool optimizeForPower,
+                                                        const std::string& uniqueId,
+                                                        float requestedRefreshRate) {
+    return createVirtualDisplay(displayName, isSecure, optimizeForPower, uniqueId,
+                                gui::Uid::INVALID.val(), requestedRefreshRate);
+}
+
+sp<IBinder> SurfaceComposerClient::createVirtualDisplay(const std::string& displayName,
+                                                        bool isSecure, bool optimizeForPower,
                                                         const std::string& uniqueId, uid_t ownerUid,
                                                         float requestedRefreshRate) {
     const gui::ISurfaceComposer::OptimizationPolicy optimizationPolicy = optimizeForPower
